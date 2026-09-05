@@ -31,6 +31,16 @@ interface Props {
 
 const MAX_CHART_POINTS = 48
 
+type ChartWindow = 1 | 3 | 6 | 12 | 'week'
+
+const CHART_WINDOWS: { id: ChartWindow; label: string }[] = [
+  { id: 1, label: '1h' },
+  { id: 3, label: '3h' },
+  { id: 6, label: '6h' },
+  { id: 12, label: '12h' },
+  { id: 'week', label: 'Week' },
+]
+
 function thinTimes(times: string[], max: number): string[] {
   if (times.length <= max) return times
   const out: string[] = []
@@ -44,6 +54,18 @@ function thinTimes(times: string[], max: number): string[] {
   return out
 }
 
+function lastSnapAtOrBefore(
+  snapshots: SsSnapshot[],
+  userId: string,
+  t: string,
+  fallback: number,
+): number {
+  const snap = snapshots
+    .filter((s) => s.user_id === userId && s.captured_at <= t)
+    .at(-1)
+  return snap ? Number(snap.bankroll) : fallback
+}
+
 export function HomeView({
   member,
   week,
@@ -55,6 +77,7 @@ export function HomeView({
   onRefresh,
 }: Props) {
   const [removeMsg, setRemoveMsg] = useState('')
+  const [chartWindow, setChartWindow] = useState<ChartWindow>(1)
   const memberById = useMemo(
     () => Object.fromEntries(members.map((m) => [m.user_id, m])),
     [members],
@@ -82,14 +105,22 @@ export function HomeView({
   const leaders = eligibleRows.filter((r) => r.bankroll === leadBankroll)
 
   const chartData = useMemo(() => {
-    const times = thinTimes([...new Set(snapshots.map((s) => s.captured_at))].sort(), MAX_CHART_POINTS)
+    const now = Date.now()
+    const cutoffMs = chartWindow === 'week' ? null : now - chartWindow * 60 * 60 * 1000
+    const allTimes = [...new Set(snapshots.map((s) => s.captured_at))].sort()
+    let times = allTimes
+    if (cutoffMs != null) {
+      const cutoffIso = new Date(cutoffMs).toISOString()
+      const inWindow = allTimes.filter((t) => new Date(t).getTime() >= cutoffMs)
+      const seed = allTimes.filter((t) => t < cutoffIso).at(-1)
+      times = seed ? [seed, ...inWindow.filter((t) => t !== seed)] : inWindow
+      if (times.length === 0) times = [cutoffIso]
+    }
+    times = thinTimes(times, MAX_CHART_POINTS)
     const points = times.map((t) => {
       const row: Record<string, string | number> = { t, label: timeLabel(t) }
       for (const e of entries) {
-        const snap = snapshots
-          .filter((s) => s.user_id === e.user_id && s.captured_at <= t)
-          .at(-1)
-        row[e.user_id] = snap ? Number(snap.bankroll) : Number(e.starting_bankroll)
+        row[e.user_id] = lastSnapAtOrBefore(snapshots, e.user_id, t, Number(e.starting_bankroll))
       }
       return row
     })
@@ -98,7 +129,7 @@ export function HomeView({
       live[r.entry.user_id] = Number(r.bankroll.toFixed(2))
     }
     return [...points, live]
-  }, [snapshots, entries, memberById, rows])
+  }, [snapshots, entries, rows, chartWindow])
 
   const lastIndex = Math.max(0, chartData.length - 1)
 
@@ -144,9 +175,22 @@ export function HomeView({
       </section>
 
       <section className="card p-3">
-        <div className="flex items-center justify-between px-1 pb-2">
+        <div className="flex items-center justify-between gap-2 px-1 pb-2">
           <h3 className="text-sm font-medium text-zinc-300">Bankroll</h3>
-          <p className="text-[11px] text-zinc-500">Live · every few seconds</p>
+          <div className="flex border border-zinc-800" role="group" aria-label="Bankroll time window">
+            {CHART_WINDOWS.map((w) => (
+              <button
+                key={String(w.id)}
+                type="button"
+                onClick={() => setChartWindow(w.id)}
+                className={`px-2 py-1 text-[11px] font-medium ${
+                  chartWindow === w.id ? 'bg-zinc-700 text-white' : 'bg-zinc-900 text-zinc-500'
+                }`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="h-60">
           {chartData.length === 0 ? (

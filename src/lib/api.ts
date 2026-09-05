@@ -80,6 +80,26 @@ export async function deleteBet(betId: string): Promise<void> {
   raise(error)
 }
 
+export async function editBet(input: {
+  betId: string
+  stake: number
+  legs: {
+    description: string
+    american_odds: number
+    kalshi_ticker?: string | null
+    kalshi_side?: string | null
+    entry_yes_cents?: number | null
+  }[]
+}): Promise<SsBet> {
+  const { data, error } = await supabase.rpc('ss_edit_bet', {
+    p_bet_id: input.betId,
+    p_stake: input.stake,
+    p_legs: input.legs,
+  })
+  raise(error)
+  return data as SsBet
+}
+
 export async function redeemInvite(code: string, displayName: string): Promise<SsMember> {
   const { data, error } = await supabase.rpc('ss_redeem_invite', {
     p_code: code.trim(),

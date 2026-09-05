@@ -2,6 +2,7 @@ import { formatAmerican, formatCents, kalshiCentsToAmerican } from '../lib/odds'
 import { money } from '../lib/format'
 import { deleteBet, settleBet } from '../lib/api'
 import { friendlyError } from '../lib/errors'
+import { EditPosition } from '../components/EditPosition'
 import { PlayerAvatar } from '../components/PlayerAvatar'
 import type { BetStatus, SsBet, SsMember, SsQuote, SsWeek } from '../lib/types'
 import { useState } from 'react'
@@ -18,6 +19,7 @@ interface Props {
 export function BetsView({ member, week, bets, quotes, members, onChanged }: Props) {
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const names = Object.fromEntries(members.map((m) => [m.user_id, m.display_name]))
   const colors = Object.fromEntries(members.map((m) => [m.user_id, m.color]))
   const qmap = Object.fromEntries(quotes.map((q) => [q.ticker, q]))
@@ -63,15 +65,17 @@ export function BetsView({ member, week, bets, quotes, members, onChanged }: Pro
   return (
     <div className="space-y-3">
       <p className="text-sm text-zinc-500">
-        Open positions mark to Kalshi. Settle when the game’s over, or delete a ticket you
-        logged by mistake.
+        Open positions mark to Kalshi. Settle when the game’s over. Edit or delete a ticket
+        you logged by mistake.
       </p>
       {error && <p className="text-sm text-red-400">{error}</p>}
       {mineFirst.length === 0 && <p className="text-sm text-zinc-500">No positions yet this week.</p>}
       {mineFirst.map((bet) => {
         const own = bet.user_id === member.user_id || member.is_admin
         const canSettle = own && bet.status === 'open' && week.status === 'open'
-        const canDelete = own && week.status === 'open'
+        const canEdit = own && week.status === 'open'
+        const canDelete = canEdit
+        const editing = editingId === bet.id
         const who = names[bet.user_id] ?? 'Friend'
         return (
           <article key={bet.id} className="card p-4 space-y-2">
@@ -100,56 +104,84 @@ export function BetsView({ member, week, bets, quotes, members, onChanged }: Pro
                 </p>
               </div>
             </div>
-            <ul className="text-sm space-y-1">
-              {(bet.legs ?? []).map((leg) => {
-                const q = leg.kalshi_ticker ? qmap[leg.kalshi_ticker] : null
-                const liveCents =
-                  q && leg.kalshi_side
-                    ? leg.kalshi_side === 'yes'
-                      ? Number(q.yes_cents)
-                      : 100 - Number(q.yes_cents)
-                    : null
-                return (
-                  <li key={leg.id} className="text-zinc-300 flex justify-between gap-2">
-                    <span className="truncate">{leg.description}</span>
-                    <span className="tabular-nums text-zinc-500 shrink-0">
-                      {formatAmerican(Number(leg.american_odds))}
-                      {liveCents != null && bet.status === 'open' && (
-                        <span className="text-emerald-400">
-                          {' · '}
-                          {formatCents(liveCents)} {formatAmerican(kalshiCentsToAmerican(liveCents))}
+            {editing ? (
+              <EditPosition
+                bet={bet}
+                busy={busyId === bet.id}
+                onBusy={(busy) => setBusyId(busy ? bet.id : null)}
+                onCancel={() => setEditingId(null)}
+                onSaved={async () => {
+                  setEditingId(null)
+                  await onChanged()
+                }}
+              />
+            ) : (
+              <>
+                <ul className="text-sm space-y-1">
+                  {(bet.legs ?? []).map((leg) => {
+                    const q = leg.kalshi_ticker ? qmap[leg.kalshi_ticker] : null
+                    const liveCents =
+                      q && leg.kalshi_side
+                        ? leg.kalshi_side === 'yes'
+                          ? Number(q.yes_cents)
+                          : 100 - Number(q.yes_cents)
+                        : null
+                    return (
+                      <li key={leg.id} className="text-zinc-300 flex justify-between gap-2">
+                        <span className="truncate">{leg.description}</span>
+                        <span className="tabular-nums text-zinc-500 shrink-0">
+                          {formatAmerican(Number(leg.american_odds))}
+                          {liveCents != null && bet.status === 'open' && (
+                            <span className="text-emerald-400">
+                              {' · '}
+                              {formatCents(liveCents)} {formatAmerican(kalshiCentsToAmerican(liveCents))}
+                            </span>
+                          )}
                         </span>
-                      )}
-                    </span>
-                  </li>
-                )
-              })}
-            </ul>
-            {(canSettle || canDelete) && (
-              <div className="flex flex-wrap gap-2 pt-1">
-                {canSettle &&
-                  (['won', 'lost', 'push', 'void'] as const).map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      disabled={busyId === bet.id}
-                      className="btn-secondary text-xs py-1.5 capitalize"
-                      onClick={() => void settle(bet.id, s)}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                {canDelete && (
-                  <button
-                    type="button"
-                    disabled={busyId === bet.id}
-                    className="btn-danger text-xs py-1.5"
-                    onClick={() => void remove(bet)}
-                  >
-                    Delete
-                  </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+                {(canSettle || canEdit) && (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {canSettle &&
+                      (['won', 'lost', 'push', 'void'] as const).map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          disabled={busyId === bet.id}
+                          className="btn-secondary text-xs py-1.5 capitalize"
+                          onClick={() => void settle(bet.id, s)}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    {canEdit && (
+                      <button
+                        type="button"
+                        disabled={busyId === bet.id}
+                        className="btn-secondary text-xs py-1.5"
+                        onClick={() => {
+                          setError('')
+                          setEditingId(bet.id)
+                        }}
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        type="button"
+                        disabled={busyId === bet.id}
+                        className="btn-danger text-xs py-1.5"
+                        onClick={() => void remove(bet)}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 )}
-              </div>
+              </>
             )}
           </article>
         )

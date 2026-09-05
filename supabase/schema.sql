@@ -1095,6 +1095,128 @@ begin
 end;
 $$;
 
+create or replace function ss_private.edit_bet(
+  p_bet_id uuid,
+  p_stake numeric,
+  p_legs jsonb
+)
+returns public.ss_bets
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_bet public.ss_bets;
+  v_week public.ss_weeks;
+  v_cash numeric;
+  v_leg jsonb;
+  v_odds numeric[];
+  v_combined numeric;
+  v_kind text;
+  v_i int := 0;
+  v_desc text;
+  v_am numeric;
+  v_ticker text;
+  v_side text;
+  v_cents numeric;
+  v_n int;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated' using errcode = '42501';
+  end if;
+  if p_stake is null or p_stake <= 0 then
+    raise exception 'Stake must be positive';
+  end if;
+  if jsonb_typeof(p_legs) <> 'array' then
+    raise exception 'Legs required';
+  end if;
+  v_n := jsonb_array_length(p_legs);
+  if v_n < 1 then
+    raise exception 'Need at least one pick';
+  end if;
+  v_kind := case when v_n = 1 then 'straight' else 'parlay' end;
+
+  select * into v_bet from public.ss_bets b where b.id = p_bet_id for update;
+  if not found then
+    raise exception 'Bet not found';
+  end if;
+  if v_bet.user_id <> v_uid and not ss_private.is_ss_admin(v_uid) then
+    raise exception 'You can only edit your own bets' using errcode = '42501';
+  end if;
+
+  select * into v_week from public.ss_weeks w where w.id = v_bet.week_id;
+  if v_week.status <> 'open' then
+    raise exception 'This week is locked';
+  end if;
+
+  perform 1
+  from public.ss_week_entries e
+  where e.week_id = v_bet.week_id and e.user_id = v_bet.user_id
+  for update;
+
+  v_cash := ss_private.cash_on_hand(v_bet.week_id, v_bet.user_id);
+  if v_bet.status <> 'void' then
+    v_cash := v_cash + v_bet.stake;
+    if v_bet.status = 'won' then
+      v_cash := v_cash - v_bet.stake * ss_private.american_to_decimal(v_bet.combined_american);
+    elsif v_bet.status = 'push' then
+      v_cash := v_cash - v_bet.stake;
+    end if;
+  end if;
+  if v_bet.status <> 'void' and p_stake > v_cash + 0.001 then
+    raise exception 'Stake exceeds cash on hand ($%)', v_cash;
+  end if;
+
+  v_odds := array[]::numeric[];
+  for v_leg in select * from jsonb_array_elements(p_legs)
+  loop
+    v_desc := trim(v_leg->>'description');
+    v_am := (v_leg->>'american_odds')::numeric;
+    if v_desc is null or char_length(v_desc) < 1 then
+      raise exception 'Each pick needs a description';
+    end if;
+    if char_length(v_desc) > 200 then
+      raise exception 'Each pick must be 200 characters or fewer';
+    end if;
+    if v_am is null or v_am = 0 or abs(v_am) < 100 then
+      raise exception 'American odds must be ±100 or longer';
+    end if;
+    v_odds := array_append(v_odds, v_am);
+  end loop;
+
+  v_combined := ss_private.decimal_to_american(
+    (select round(exp(sum(ln(ss_private.american_to_decimal(o)))), 8) from unnest(v_odds) o)
+  );
+
+  update public.ss_bets
+  set kind = v_kind,
+      stake = round(p_stake, 2),
+      combined_american = v_combined
+  where id = p_bet_id
+  returning * into v_bet;
+
+  delete from public.ss_bet_legs where bet_id = p_bet_id;
+
+  for v_leg in select * from jsonb_array_elements(p_legs)
+  loop
+    v_desc := trim(v_leg->>'description');
+    v_am := (v_leg->>'american_odds')::numeric;
+    v_ticker := nullif(trim(v_leg->>'kalshi_ticker'), '');
+    v_side := nullif(trim(v_leg->>'kalshi_side'), '');
+    v_cents := nullif(v_leg->>'entry_yes_cents', '')::numeric;
+    insert into public.ss_bet_legs (
+      bet_id, position, description, american_odds, kalshi_ticker, kalshi_side, entry_yes_cents
+    ) values (
+      v_bet.id, v_i, v_desc, v_am, v_ticker, v_side, v_cents
+    );
+    v_i := v_i + 1;
+  end loop;
+
+  return v_bet;
+end;
+$$;
+
 create or replace function ss_private.upsert_quote(p_ticker text, p_yes_cents numeric, p_title text)
 returns void
 language plpgsql
@@ -1296,6 +1418,19 @@ as $$
   select ss_private.delete_bet(p_bet_id);
 $$;
 
+create or replace function public.ss_edit_bet(
+  p_bet_id uuid,
+  p_stake numeric,
+  p_legs jsonb
+)
+returns public.ss_bets
+language sql
+security invoker
+set search_path = ss_private, public, pg_catalog
+as $$
+  select * from ss_private.edit_bet(p_bet_id, p_stake, p_legs);
+$$;
+
 grant execute on all functions in schema ss_private to authenticated, service_role;
 grant execute on function public.ss_redeem_invite(text, text) to authenticated;
 grant execute on function public.ss_join_week(uuid) to authenticated;
@@ -1314,6 +1449,7 @@ grant execute on function public.ss_list_pending() to authenticated;
 grant execute on function public.ss_list_roster() to authenticated;
 grant execute on function public.ss_claim_pending() to authenticated;
 grant execute on function public.ss_delete_bet(uuid) to authenticated;
+grant execute on function public.ss_edit_bet(uuid, numeric, jsonb) to authenticated;
 
 revoke execute on function public.ss_upsert_quote(text, numeric, text) from public, anon, authenticated;
 revoke execute on function public.ss_record_snapshots(uuid) from public, anon, authenticated;
