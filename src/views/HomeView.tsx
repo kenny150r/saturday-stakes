@@ -8,12 +8,13 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Crown, Ticket } from 'lucide-react'
+import { Crown } from 'lucide-react'
+import { HostTools } from '../components/HostTools'
 import { ChartAvatarDot, PlayerAvatar } from '../components/PlayerAvatar'
 import { bankrollForUser, qualifyingBetCount } from '../lib/bankroll'
 import { QUALIFYING_BETS } from '../lib/odds'
 import { initials, money, shortDate, timeLabel } from '../lib/format'
-import { createInvite, lockWeek, prizePool } from '../lib/api'
+import { prizePool, removeMember } from '../lib/api'
 import { friendlyError } from '../lib/errors'
 import type { SsBet, SsMember, SsQuote, SsSnapshot, SsWeek, SsWeekEntry } from '../lib/types'
 
@@ -53,8 +54,7 @@ export function HomeView({
   snapshots,
   onRefresh,
 }: Props) {
-  const [invite, setInvite] = useState<string | null>(null)
-  const [msg, setMsg] = useState('')
+  const [removeMsg, setRemoveMsg] = useState('')
   const memberById = useMemo(
     () => Object.fromEntries(members.map((m) => [m.user_id, m])),
     [members],
@@ -102,29 +102,25 @@ export function HomeView({
 
   const lastIndex = Math.max(0, chartData.length - 1)
 
-  async function onLock() {
-    if (!confirm('Lock this week and crown the winner? New bets will be closed.')) return
-    setMsg('')
-    try {
-      await lockWeek(week.id)
-      await onRefresh()
-    } catch (e) {
-      setMsg(friendlyError(e, 'Could not lock'))
-    }
-  }
-
-  async function onInvite() {
-    setMsg('')
-    try {
-      const code = await createInvite(30)
-      setInvite(code)
-    } catch (e) {
-      setMsg(friendlyError(e, 'Could not create invite'))
-    }
-  }
-
   const locked = week.status === 'locked'
   const winners = new Set(week.winner_user_ids ?? [])
+
+  async function onRemovePlayer(target: SsMember) {
+    if (
+      !confirm(
+        `Remove ${target.display_name} from the club? Their bets this week will be deleted.`,
+      )
+    ) {
+      return
+    }
+    setRemoveMsg('')
+    try {
+      await removeMember(target.user_id)
+      await onRefresh()
+    } catch (e) {
+      setRemoveMsg(friendlyError(e, 'Could not remove member'))
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -218,14 +214,18 @@ export function HomeView({
       </section>
 
       <section className="space-y-2">
+        {removeMsg && <p className="text-sm text-red-400">{removeMsg}</p>}
         {rows.map((r, i) => {
           const isLead = r.eligible && leaders.some((l) => l.entry.user_id === r.entry.user_id)
           const won = winners.has(r.entry.user_id)
-          const name = r.member?.display_name ?? 'Friend'
+          const target = r.member
+          const name = target?.display_name ?? 'Friend'
+          const canRemove =
+            member.is_admin && target != null && r.entry.user_id !== member.user_id
           return (
             <div key={r.entry.user_id} className="card p-3 flex items-center gap-3">
               <span className="text-zinc-600 w-4 text-sm tabular-nums">{i + 1}</span>
-              <PlayerAvatar name={name} color={r.member?.color ?? '#3f3f46'} size={36} />
+              <PlayerAvatar name={name} color={target?.color ?? '#3f3f46'} size={36} />
               <div className="min-w-0 flex-1">
                 <p className="font-medium truncate flex items-center gap-1">
                   {name}
@@ -236,7 +236,18 @@ export function HomeView({
                   {r.eligible ? '' : ' · not eligible yet'}
                 </p>
               </div>
-              <p className="text-lg font-semibold tabular-nums">{money(r.bankroll)}</p>
+              <div className="text-right shrink-0">
+                <p className="text-lg font-semibold tabular-nums">{money(r.bankroll)}</p>
+                {canRemove && target && (
+                  <button
+                    type="button"
+                    className="text-xs text-red-400 hover:text-red-300"
+                    onClick={() => void onRemovePlayer(target)}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
           )
         })}
@@ -246,28 +257,7 @@ export function HomeView({
       </section>
 
       {member.is_admin && (
-        <section className="card p-4 space-y-3">
-          <h3 className="font-medium flex items-center gap-2">
-            <Ticket className="h-4 w-4 text-emerald-400" />
-            Host tools
-          </h3>
-          {invite && (
-            <p className="text-sm">
-              New invite: <span className="font-mono text-emerald-400">{invite}</span>
-            </p>
-          )}
-          {msg && <p className="text-sm text-red-400">{msg}</p>}
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-secondary" onClick={onInvite}>
-              New invite code
-            </button>
-            {!locked && (
-              <button type="button" className="btn-secondary" onClick={onLock}>
-                Lock week & crown
-              </button>
-            )}
-          </div>
-        </section>
+        <HostTools member={member} week={week} members={members} onRefresh={onRefresh} />
       )}
     </div>
   )

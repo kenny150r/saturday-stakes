@@ -12,6 +12,16 @@ export interface SsMember {
   created_at: string
 }
 
+export interface SsPendingMember {
+  email: string
+  display_name: string
+  created_at: string
+}
+
+export type AddMemberResult =
+  | { status: 'joined'; display_name: string }
+  | { status: 'pending'; email: string; display_name: string }
+
 export interface SsWeek {
   id: string
   saturday_date: string

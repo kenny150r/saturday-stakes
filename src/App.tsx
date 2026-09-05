@@ -9,6 +9,7 @@ import { HomeView } from './views/HomeView'
 import { LogBetView } from './views/LogBetView'
 import { BetsView } from './views/BetsView'
 import {
+  claimPending,
   ensureWeek,
   fetchBets,
   fetchEntries,
@@ -80,6 +81,10 @@ export default function App() {
     let cancelled = false
     setMemberLoading(true)
     fetchMyMember()
+      .then(async (m) => {
+        if (m) return m
+        return claimPending()
+      })
       .then((m) => {
         if (!cancelled) setMember(m)
       })
@@ -114,17 +119,19 @@ export default function App() {
     clubLock.current = true
     try {
       const tickers = tickersFromBets(betsRef.current)
-      const [ms, es, bs, snaps, stored] = await Promise.all([
+      const [ms, es, bs, snaps, stored, me] = await Promise.all([
         fetchMembers(),
         fetchEntries(weekId),
         fetchBets(weekId),
         fetchSnapshots(weekId),
         fetchQuotes(tickers),
+        fetchMyMember().catch(() => null),
       ])
       setMembers(ms)
       setEntries(es)
       setBets(bs)
       setSnapshots(snaps)
+      if (me) setMember(me)
       if (stored.length) setQuotes(stored)
       const openTickers = tickersFromBets(bs)
       if (openTickers.length) {

@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import { BUYIN, STARTING_BANKROLL } from './odds'
 import { friendlyError } from './errors'
 import type {
+  AddMemberResult,
   BetKind,
   BetStatus,
   KalshiBoardEvent,
@@ -9,6 +10,7 @@ import type {
   SsBet,
   SsBetLeg,
   SsMember,
+  SsPendingMember,
   SsQuote,
   SsSnapshot,
   SsWeek,
@@ -31,6 +33,44 @@ export async function fetchMyMember(): Promise<SsMember | null> {
     .maybeSingle()
   raise(error)
   return (data as SsMember | null) ?? null
+}
+
+export async function claimPending(): Promise<SsMember | null> {
+  const { data, error } = await supabase.rpc('ss_claim_pending')
+  raise(error)
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row || typeof row !== 'object' || !('user_id' in row) || !row.user_id) return null
+  return row as SsMember
+}
+
+export async function addMember(email: string, displayName: string): Promise<AddMemberResult> {
+  const { data, error } = await supabase.rpc('ss_add_member', {
+    p_email: email.trim(),
+    p_display_name: displayName.trim(),
+  })
+  raise(error)
+  return data as AddMemberResult
+}
+
+export async function removeMember(userId: string): Promise<void> {
+  const { error } = await supabase.rpc('ss_remove_member', { p_user_id: userId })
+  raise(error)
+}
+
+export async function listPending(): Promise<SsPendingMember[]> {
+  const { data, error } = await supabase.rpc('ss_list_pending')
+  raise(error)
+  return (data ?? []) as SsPendingMember[]
+}
+
+export async function removePending(email: string): Promise<void> {
+  const { error } = await supabase.rpc('ss_remove_pending', { p_email: email })
+  raise(error)
+}
+
+export async function deleteBet(betId: string): Promise<void> {
+  const { error } = await supabase.rpc('ss_delete_bet', { p_bet_id: betId })
+  raise(error)
 }
 
 export async function redeemInvite(code: string, displayName: string): Promise<SsMember> {

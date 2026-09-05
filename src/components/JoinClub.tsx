@@ -55,7 +55,7 @@ export function JoinClub({ onJoined }: { onJoined: (m: SsMember) => void }) {
               required
               value={code}
               onChange={(e) => setCode(e.target.value.toUpperCase())}
-              placeholder="SAT-••••••"
+              placeholder="GODE-VILS"
               className="input font-mono tracking-wide"
             />
           </div>

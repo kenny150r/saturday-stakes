@@ -1,6 +1,6 @@
 import { formatAmerican, formatCents, kalshiCentsToAmerican } from '../lib/odds'
 import { money } from '../lib/format'
-import { settleBet } from '../lib/api'
+import { deleteBet, settleBet } from '../lib/api'
 import { friendlyError } from '../lib/errors'
 import { PlayerAvatar } from '../components/PlayerAvatar'
 import type { BetStatus, SsBet, SsMember, SsQuote, SsWeek } from '../lib/types'
@@ -40,16 +40,38 @@ export function BetsView({ member, week, bets, quotes, members, onChanged }: Pro
     }
   }
 
+  async function remove(bet: SsBet) {
+    if (
+      !confirm(
+        'Delete this ticket? It will come off the bankroll as if it was never placed.',
+      )
+    ) {
+      return
+    }
+    setError('')
+    setBusyId(bet.id)
+    try {
+      await deleteBet(bet.id)
+      await onChanged()
+    } catch (e) {
+      setError(friendlyError(e, 'Could not delete'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   return (
     <div className="space-y-3">
       <p className="text-sm text-zinc-500">
-        Open positions mark to Kalshi. Settle when the game’s over.
+        Open positions mark to Kalshi. Settle when the game’s over, or delete a ticket you
+        logged by mistake.
       </p>
       {error && <p className="text-sm text-red-400">{error}</p>}
       {mineFirst.length === 0 && <p className="text-sm text-zinc-500">No positions yet this week.</p>}
       {mineFirst.map((bet) => {
         const own = bet.user_id === member.user_id || member.is_admin
         const canSettle = own && bet.status === 'open' && week.status === 'open'
+        const canDelete = own && week.status === 'open'
         const who = names[bet.user_id] ?? 'Friend'
         return (
           <article key={bet.id} className="card p-4 space-y-2">
@@ -103,19 +125,30 @@ export function BetsView({ member, week, bets, quotes, members, onChanged }: Pro
                 )
               })}
             </ul>
-            {canSettle && (
+            {(canSettle || canDelete) && (
               <div className="flex flex-wrap gap-2 pt-1">
-                {(['won', 'lost', 'push', 'void'] as const).map((s) => (
+                {canSettle &&
+                  (['won', 'lost', 'push', 'void'] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      disabled={busyId === bet.id}
+                      className="btn-secondary text-xs py-1.5 capitalize"
+                      onClick={() => void settle(bet.id, s)}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                {canDelete && (
                   <button
-                    key={s}
                     type="button"
                     disabled={busyId === bet.id}
-                    className="btn-secondary text-xs py-1.5 capitalize"
-                    onClick={() => settle(bet.id, s)}
+                    className="btn-danger text-xs py-1.5"
+                    onClick={() => void remove(bet)}
                   >
-                    {s}
+                    Delete
                   </button>
-                ))}
+                )}
               </div>
             )}
           </article>
