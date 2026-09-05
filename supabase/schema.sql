@@ -843,6 +843,23 @@ begin
 end;
 $$;
 
+create or replace function ss_private.snap_after_bet()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  perform ss_private.record_snapshots(coalesce(NEW.week_id, OLD.week_id));
+  return coalesce(NEW, OLD);
+end;
+$$;
+
+drop trigger if exists ss_bets_snapshot on public.ss_bets;
+create trigger ss_bets_snapshot
+after insert or update or delete on public.ss_bets
+for each row execute function ss_private.snap_after_bet();
+
 create or replace function ss_private.create_invite(p_max_uses int, p_expires_at timestamptz)
 returns text
 language plpgsql

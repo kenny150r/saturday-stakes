@@ -66,6 +66,15 @@ function lastSnapAtOrBefore(
   return snap ? Number(snap.bankroll) : fallback
 }
 
+function evenTicks(start: number, end: number, count: number): number[] {
+  if (end <= start || count < 2) return [end]
+  const ticks: number[] = []
+  for (let i = 0; i < count; i++) {
+    ticks.push(start + ((end - start) * i) / (count - 1))
+  }
+  return ticks
+}
+
 export function HomeView({
   member,
   week,
@@ -104,32 +113,44 @@ export function HomeView({
   const leadBankroll = eligibleRows[0]?.bankroll
   const leaders = eligibleRows.filter((r) => r.bankroll === leadBankroll)
 
-  const chartData = useMemo(() => {
-    const now = Date.now()
-    const cutoffMs = chartWindow === 'week' ? null : now - chartWindow * 60 * 60 * 1000
-    const allTimes = [...new Set(snapshots.map((s) => s.captured_at))].sort()
-    let times = allTimes
-    if (cutoffMs != null) {
-      const cutoffIso = new Date(cutoffMs).toISOString()
-      const inWindow = allTimes.filter((t) => new Date(t).getTime() >= cutoffMs)
-      const seed = allTimes.filter((t) => t < cutoffIso).at(-1)
-      times = seed ? [seed, ...inWindow.filter((t) => t !== seed)] : inWindow
-      if (times.length === 0) times = [cutoffIso]
-    }
-    times = thinTimes(times, MAX_CHART_POINTS)
-    const points = times.map((t) => {
-      const row: Record<string, string | number> = { t, label: timeLabel(t) }
+  const { chartData, xDomain, xTicks } = useMemo(() => {
+    const end = Date.now()
+    const start =
+      chartWindow === 'week'
+        ? new Date(week.opens_at).getTime()
+        : end - chartWindow * 60 * 60 * 1000
+    const startIso = new Date(start).toISOString()
+    const endIso = new Date(end).toISOString()
+    const inWindow = [...new Set(snapshots.map((s) => s.captured_at))]
+      .filter((t) => {
+        const ms = new Date(t).getTime()
+        return ms > start && ms < end
+      })
+      .sort()
+    const times = thinTimes([startIso, ...inWindow, endIso], MAX_CHART_POINTS)
+    const points = times.map((t, i) => {
+      const last = i === times.length - 1
+      const tMs = last ? end : new Date(t).getTime()
+      const row: Record<string, string | number> = {
+        t,
+        tMs,
+        label: last ? 'Now' : timeLabel(t),
+      }
       for (const e of entries) {
-        row[e.user_id] = lastSnapAtOrBefore(snapshots, e.user_id, t, Number(e.starting_bankroll))
+        row[e.user_id] = last
+          ? Number(
+              (rows.find((r) => r.entry.user_id === e.user_id)?.bankroll ?? Number(e.starting_bankroll)).toFixed(2),
+            )
+          : lastSnapAtOrBefore(snapshots, e.user_id, t, Number(e.starting_bankroll))
       }
       return row
     })
-    const live: Record<string, string | number> = { t: new Date().toISOString(), label: 'Now' }
-    for (const r of rows) {
-      live[r.entry.user_id] = Number(r.bankroll.toFixed(2))
+    return {
+      chartData: points,
+      xDomain: [start, end] as [number, number],
+      xTicks: evenTicks(start, end, chartWindow === 1 ? 4 : 5),
     }
-    return [...points, live]
-  }, [snapshots, entries, rows, chartWindow])
+  }, [snapshots, entries, rows, chartWindow, week.opens_at])
 
   const lastIndex = Math.max(0, chartData.length - 1)
 
@@ -197,9 +218,22 @@ export function HomeView({
             <p className="text-sm text-zinc-500 px-1">Log a bet to start the chart.</p>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 18, right: 22, left: 0, bottom: 0 }}>
+              <LineChart
+                key={String(chartWindow)}
+                data={chartData}
+                margin={{ top: 18, right: 22, left: 0, bottom: 0 }}
+              >
                 <CartesianGrid stroke="#262626" strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fill: '#71717a', fontSize: 11 }} />
+                <XAxis
+                  type="number"
+                  dataKey="tMs"
+                  domain={xDomain}
+                  ticks={xTicks}
+                  tick={{ fill: '#71717a', fontSize: 11 }}
+                  tickFormatter={(ms: number) =>
+                    ms >= xDomain[1] - 1500 ? 'Now' : timeLabel(new Date(ms).toISOString())
+                  }
+                />
                 <YAxis
                   tick={{ fill: '#71717a', fontSize: 11 }}
                   domain={['auto', 'auto']}
@@ -209,6 +243,9 @@ export function HomeView({
                 <Tooltip
                   contentStyle={{ background: '#111111', border: '1px solid #262626', borderRadius: 0 }}
                   formatter={(value) => money(Number(value))}
+                  labelFormatter={(ms) =>
+                    Number(ms) >= xDomain[1] - 1500 ? 'Now' : timeLabel(new Date(Number(ms)).toISOString())
+                  }
                 />
                 {rows.map((r) => {
                   const name = r.member?.display_name ?? 'Friend'
