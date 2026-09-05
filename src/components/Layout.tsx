@@ -28,6 +28,7 @@ export function Layout({ member, week, view, onChangeView, children }: Props) {
               {week ? shortDate(week.saturday_date) : 'CFB'}
               {' · '}
               {member.display_name}
+              {member.is_admin ? ' · Host' : ''}
             </p>
           </div>
           <button

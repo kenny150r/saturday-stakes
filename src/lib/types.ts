@@ -18,6 +18,14 @@ export interface SsPendingMember {
   created_at: string
 }
 
+export interface SsRosterMember {
+  user_id: string
+  display_name: string
+  email: string
+  is_admin: boolean
+  created_at: string
+}
+
 export type AddMemberResult =
   | { status: 'joined'; display_name: string }
   | { status: 'pending'; email: string; display_name: string }

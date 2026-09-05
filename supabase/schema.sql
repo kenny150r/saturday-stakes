@@ -994,6 +994,31 @@ begin
 end;
 $$;
 
+create or replace function ss_private.list_roster()
+returns table (
+  user_id uuid,
+  display_name text,
+  email text,
+  is_admin boolean,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if not ss_private.is_ss_admin() then
+    raise exception 'Admin only' using errcode = '42501';
+  end if;
+  return query
+    select m.user_id, m.display_name, lower(u.email), m.is_admin, m.created_at
+    from public.ss_members m
+    join auth.users u on u.id = m.user_id
+    order by m.created_at;
+end;
+$$;
+
 create or replace function ss_private.claim_pending()
 returns setof public.ss_members
 language plpgsql
@@ -1238,6 +1263,21 @@ as $$
   select * from ss_private.list_pending();
 $$;
 
+create or replace function public.ss_list_roster()
+returns table (
+  user_id uuid,
+  display_name text,
+  email text,
+  is_admin boolean,
+  created_at timestamptz
+)
+language sql
+security invoker
+set search_path = ss_private, public, pg_catalog
+as $$
+  select * from ss_private.list_roster();
+$$;
+
 create or replace function public.ss_claim_pending()
 returns setof public.ss_members
 language sql
@@ -1271,6 +1311,7 @@ grant execute on function public.ss_add_member(text, text) to authenticated;
 grant execute on function public.ss_remove_member(uuid) to authenticated;
 grant execute on function public.ss_remove_pending(text) to authenticated;
 grant execute on function public.ss_list_pending() to authenticated;
+grant execute on function public.ss_list_roster() to authenticated;
 grant execute on function public.ss_claim_pending() to authenticated;
 grant execute on function public.ss_delete_bet(uuid) to authenticated;
 

@@ -11,6 +11,7 @@ import type {
   SsBetLeg,
   SsMember,
   SsPendingMember,
+  SsRosterMember,
   SsQuote,
   SsSnapshot,
   SsWeek,
@@ -55,6 +56,12 @@ export async function addMember(email: string, displayName: string): Promise<Add
 export async function removeMember(userId: string): Promise<void> {
   const { error } = await supabase.rpc('ss_remove_member', { p_user_id: userId })
   raise(error)
+}
+
+export async function listRoster(): Promise<SsRosterMember[]> {
+  const { data, error } = await supabase.rpc('ss_list_roster')
+  raise(error)
+  return (data ?? []) as SsRosterMember[]
 }
 
 export async function listPending(): Promise<SsPendingMember[]> {

@@ -4,13 +4,14 @@ import {
   addMember,
   createInvite,
   listPending,
+  listRoster,
   lockWeek,
   removeMember,
   removePending,
 } from '../lib/api'
 import { friendlyError } from '../lib/errors'
 import { PlayerAvatar } from './PlayerAvatar'
-import type { SsMember, SsPendingMember, SsWeek } from '../lib/types'
+import type { SsMember, SsPendingMember, SsRosterMember, SsWeek } from '../lib/types'
 
 interface Props {
   member: SsMember
@@ -26,13 +27,16 @@ export function HostTools({ member, week, members, onRefresh }: Props) {
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [pending, setPending] = useState<SsPendingMember[]>([])
+  const [roster, setRoster] = useState<SsRosterMember[]>([])
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    void listPending()
-      .then((rows) => {
-        if (!cancelled) setPending(rows)
+    void Promise.all([listPending(), listRoster()])
+      .then(([pendingRows, rosterRows]) => {
+        if (cancelled) return
+        setPending(pendingRows)
+        setRoster(rosterRows)
       })
       .catch(() => undefined)
     return () => {
@@ -40,9 +44,11 @@ export function HostTools({ member, week, members, onRefresh }: Props) {
     }
   }, [members.length])
 
-  async function refreshPending() {
+  async function refreshLists() {
     try {
-      setPending(await listPending())
+      const [pendingRows, rosterRows] = await Promise.all([listPending(), listRoster()])
+      setPending(pendingRows)
+      setRoster(rosterRows)
     } catch {
       /* keep last list */
     }
@@ -86,7 +92,7 @@ export function HostTools({ member, week, members, onRefresh }: Props) {
         setOk(`${result.display_name} will join the next time they sign in.`)
       }
       await onRefresh()
-      await refreshPending()
+      await refreshLists()
     } catch (err) {
       setMsg(friendlyError(err, 'Could not add member'))
     } finally {
@@ -94,7 +100,7 @@ export function HostTools({ member, week, members, onRefresh }: Props) {
     }
   }
 
-  async function onRemove(m: SsMember) {
+  async function onRemove(m: { user_id: string; display_name: string }) {
     if (
       !confirm(
         `Remove ${m.display_name} from the club? Their bets this week will be deleted.`,
@@ -107,6 +113,7 @@ export function HostTools({ member, week, members, onRefresh }: Props) {
     try {
       await removeMember(m.user_id)
       await onRefresh()
+      await refreshLists()
     } catch (err) {
       setMsg(friendlyError(err, 'Could not remove member'))
     }
@@ -118,7 +125,7 @@ export function HostTools({ member, week, members, onRefresh }: Props) {
     setOk('')
     try {
       await removePending(p.email)
-      await refreshPending()
+      await refreshLists()
     } catch (err) {
       setMsg(friendlyError(err, 'Could not drop pending member'))
     }
@@ -156,17 +163,19 @@ export function HostTools({ member, week, members, onRefresh }: Props) {
           Members
         </h4>
         <ul className="space-y-2">
-          {members.map((m) => {
+          {(roster.length > 0 ? roster : members.map((m) => ({ ...m, email: '' }))).map((m) => {
             const self = m.user_id === member.user_id
+            const color = members.find((x) => x.user_id === m.user_id)?.color ?? '#3f3f46'
             return (
               <li key={m.user_id} className="flex items-center gap-2">
-                <PlayerAvatar name={m.display_name} color={m.color} size={28} />
+                <PlayerAvatar name={m.display_name} color={color} size={28} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm truncate">
                     {m.display_name}
                     {self ? ' · you' : ''}
                     {m.is_admin ? ' · admin' : ''}
                   </p>
+                  {m.email && <p className="text-xs text-zinc-500 truncate">{m.email}</p>}
                 </div>
                 {!self && (
                   <button
